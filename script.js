@@ -419,11 +419,17 @@ function initEventListeners() {
                 const ctx = canvas.getContext('2d');
                 const isRecognized = result.label !== 'unknown';
 
+                // Check if already attended today
+                const today = new Date().toISOString().split('T')[0];
+                const history = JSON.parse(localStorage.getItem('faceCheckHistory')) || {};
+                const todayHistory = history[today] || {};
+                const isAlreadyAttended = isRecognized && todayHistory[result.label];
+
                 // Multi-frame tracking
                 let frameCount = 0;
                 let isConfirmed = false;
 
-                if (isRecognized) {
+                if (isRecognized && !isAlreadyAttended) {
                     detectedLabels.add(result.label);
 
                     // Update recognition buffer
@@ -450,6 +456,9 @@ function initEventListeners() {
                 if (!isRecognized) {
                     boxColor = '#FF6347'; // Red for unknown
                     displayLabel = result.toString();
+                } else if (isAlreadyAttended) {
+                    boxColor = '#4169E1'; // Blue for already attended
+                    displayLabel = `✓ ${result.label} (출석완료)`;
                 } else if (isConfirmed) {
                     boxColor = '#32CD32'; // Green for confirmed
                     displayLabel = `✓ ${result.label}`;
@@ -1355,12 +1364,22 @@ function renderMonthStatus() {
                 const status = (typeof record === 'string') ? 'present' : record.status;
                 const time = (typeof record === 'string') ? record : record.time;
 
-                let color = 'var(--success-color)'; // Default Green
-                if (status === 'late') color = 'var(--warning-color)';
-                else if (status === 'early') color = 'var(--info-color)';
-                else if (status === 'absent') color = 'var(--error-color)';
+                let color, symbol;
+                if (status === 'late') {
+                    color = '#FF8C00'; // Dark Orange for better visibility
+                    symbol = '⏰';
+                } else if (status === 'early') {
+                    color = 'var(--info-color)';
+                    symbol = '◀';
+                } else if (status === 'absent') {
+                    color = 'var(--error-color)';
+                    symbol = '✕';
+                } else {
+                    color = '#2E8B57'; // Sea Green for present
+                    symbol = '✓';
+                }
 
-                cellContent = `<span class="check-mark" style="color: ${color}" data-time="${time}">✔</span>`;
+                cellContent = `<span class="check-mark" style="color: ${color}" data-time="${time}">${symbol}</span>`;
             }
 
             rowHTML += `<td>${cellContent}</td>`;
