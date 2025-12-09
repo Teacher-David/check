@@ -380,7 +380,11 @@ function initEventListeners() {
         faceapi.nets.ssdMobilenetv1.loadFromUri('https://justadudewhohacks.github.io/face-api.js/models')
     ]).then(startApp);
 
-    // Attendance Logic
+    // Attendance Logic with Multi-frame Confirmation
+    const recognitionBuffer = new Map(); // Track consecutive recognitions per person
+    const REQUIRED_FRAMES = 5; // Number of consecutive frames needed for confirmation
+    const BUFFER_TIMEOUT = 2000; // Reset buffer after 2 seconds of no detection
+
     videoAttendance.addEventListener('play', () => {
         const canvas = canvasAttendance;
         const displaySize = { width: videoAttendance.width || 640, height: videoAttendance.height || 480 };
@@ -399,6 +403,8 @@ function initEventListeners() {
             const faceMatcher = new faceapi.FaceMatcher(labeledFaceDescriptors, 0.45);
 
             const results = resizedDetections.map(d => faceMatcher.findBestMatch(d.descriptor));
+            const currentTime = Date.now();
+            const detectedLabels = new Set();
 
             results.forEach((result, i) => {
                 const box = resizedDetections[i].detection.box;
@@ -411,9 +417,46 @@ function initEventListeners() {
                 };
 
                 const ctx = canvas.getContext('2d');
-                const label = result.toString();
                 const isRecognized = result.label !== 'unknown';
-                const boxColor = isRecognized ? '#32CD32' : '#FF6347';
+
+                // Multi-frame tracking
+                let frameCount = 0;
+                let isConfirmed = false;
+
+                if (isRecognized) {
+                    detectedLabels.add(result.label);
+
+                    // Update recognition buffer
+                    if (recognitionBuffer.has(result.label)) {
+                        const data = recognitionBuffer.get(result.label);
+                        data.count++;
+                        data.lastSeen = currentTime;
+                        frameCount = data.count;
+                    } else {
+                        recognitionBuffer.set(result.label, { count: 1, lastSeen: currentTime });
+                        frameCount = 1;
+                    }
+
+                    isConfirmed = frameCount >= REQUIRED_FRAMES;
+
+                    // Only mark attendance after multi-frame confirmation
+                    if (isConfirmed) {
+                        markAttendance(result.label);
+                    }
+                }
+
+                // Visual feedback based on confirmation status
+                let boxColor, displayLabel;
+                if (!isRecognized) {
+                    boxColor = '#FF6347'; // Red for unknown
+                    displayLabel = result.toString();
+                } else if (isConfirmed) {
+                    boxColor = '#32CD32'; // Green for confirmed
+                    displayLabel = `✓ ${result.label}`;
+                } else {
+                    boxColor = '#FFA500'; // Orange for pending confirmation
+                    displayLabel = `${result.label} (${frameCount}/${REQUIRED_FRAMES})`;
+                }
 
                 // Draw box
                 ctx.strokeStyle = boxColor;
@@ -422,7 +465,7 @@ function initEventListeners() {
 
                 // Draw label background
                 ctx.font = '16px sans-serif';
-                const textWidth = ctx.measureText(label).width;
+                const textWidth = ctx.measureText(displayLabel).width;
                 const textHeight = 20;
                 const textX = mirroredBox.x;
                 const textY = mirroredBox.y - textHeight;
@@ -434,13 +477,16 @@ function initEventListeners() {
                 ctx.save();
                 ctx.scale(-1, 1);
                 ctx.fillStyle = '#FFFFFF';
-                ctx.fillText(label, -(textX + textWidth + 4), textY + 15);
+                ctx.fillText(displayLabel, -(textX + textWidth + 4), textY + 15);
                 ctx.restore();
-
-                if (isRecognized) {
-                    markAttendance(result.label);
-                }
             });
+
+            // Clean up old entries from buffer (reset if not seen recently)
+            for (const [label, data] of recognitionBuffer.entries()) {
+                if (!detectedLabels.has(label) && currentTime - data.lastSeen > BUFFER_TIMEOUT) {
+                    recognitionBuffer.delete(label);
+                }
+            }
         }, 100);
     });
 
